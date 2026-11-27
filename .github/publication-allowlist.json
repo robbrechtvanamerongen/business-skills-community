@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "package_files": {
+    "apm.yml": "06b161a73a0665ef1bda8f8aeb8029bda1b0b45ee4801070b3df45fff492ebff",
+    ".apm/skills/hello-world/SKILL.md": "85baa54ef0ed08f732463e917909ca84256bb8dd08966f89f569d27f217f38c4",
+    ".apm/skills/hello-world/agents/openai.yaml": "5fe41dd8d3d5769c81c324ebbc609c897954624ae4040598b703780ee5a9059a"
+  }
+}
