@@ -1,0 +1,93 @@
+name: Community publication checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publication-validator:
+    name: Publication validator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Validate staged snapshot and run regression tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 scripts/validate_community.py
+          python3 -m unittest discover -s tests -v
+
+  apm-installation:
+    name: APM installation
+    needs: publication-validator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned APM release and verify publisher checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          archive=apm-linux-x86_64.tar.gz
+          url=https://github.com/microsoft/apm/releases/download/v0.35.1
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 -o "$archive" "$url/$archive"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 -o "$archive.sha256" "$url/$archive.sha256"
+          expected="$(awk 'NR == 1 {print $1} END {if (NR != 1) exit 1}' "$archive.sha256")"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]]
+          printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --strict -
+          tar -xzf "$archive"
+          apm_bin="$tmp/apm-linux-x86_64/apm"
+          "$apm_bin" --version
+          echo "$tmp/apm-linux-x86_64" >> "$GITHUB_PATH"
+      - name: Install candidate into an isolated consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          consumer="$(mktemp -d)"
+          cd "$consumer"
+          git init -q
+          apm install "$GITHUB_WORKSPACE" --target copilot
+          test -f apm.lock.yaml
+          test -f .github/skills/hello-world/SKILL.md || test -f .agents/skills/hello-world/SKILL.md
+          if test -f .github/skills/hello-world/SKILL.md; then
+            installed=.github/skills/hello-world/SKILL.md
+          else
+            installed=.agents/skills/hello-world/SKILL.md
+          fi
+          grep -Fqx 'Hello, World! [APM-COMMUNITY-HELLO-001]' "$installed"
+      - name: Verify published Git commit from a clean consumer
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          PUBLIC_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PUBLIC_SHA" =~ ^[0-9a-f]{40}$ ]]
+          consumer="$(mktemp -d)"
+          cd "$consumer"
+          git init -q
+          apm install "robbrechtvanamerongen/business-skills-community#$PUBLIC_SHA" --target copilot
+          test -f apm.lock.yaml
+          if test -f .github/skills/hello-world/SKILL.md; then
+            installed=.github/skills/hello-world/SKILL.md
+          else
+            installed=.agents/skills/hello-world/SKILL.md
+          fi
+          grep -Fqx 'Hello, World! [APM-COMMUNITY-HELLO-001]' "$installed"
